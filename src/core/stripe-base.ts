@@ -8,13 +8,13 @@ import {
   PaymentProcessorSessionResponse,
   PaymentSessionStatus,
 } from "@medusajs/medusa"
+
 import {
   ErrorCodes,
   ErrorIntentStatus,
   PaymentIntentOptions,
   StripeOptions,
 } from "../types"
-
 abstract class StripeBase extends AbstractPaymentProcessor {
   static identifier = ""
 
@@ -92,7 +92,6 @@ abstract class StripeBase extends AbstractPaymentProcessor {
       resource_id,
       customer,
     } = context
-
     const description = (cart_context.payment_description ??
       this.options_?.payment_description) as string
 
@@ -250,12 +249,11 @@ abstract class StripeBase extends AbstractPaymentProcessor {
     context: PaymentProcessorContext
   ): Promise<PaymentProcessorError | PaymentProcessorSessionResponse | void> {
     const { amount, customer, paymentSessionData, billing_address, currency_code } = context
-    console.log("calculation ######################" )
-    console.log('context', context)
     const lineItems = [
       {
         amount: amount,
         reference: 'L1',
+        tax_code: 'txcd_99999999',
       },
     ]
     const calculation = await this.stripe_.tax.calculations.create({
@@ -273,7 +271,6 @@ abstract class StripeBase extends AbstractPaymentProcessor {
       },
       expand: ['line_items.data.tax_breakdown']
     });
-    console.log("calculation", calculation)
     const amountTotal = calculation.amount_total
     const stripeId = customer?.metadata?.stripe_id
 
@@ -291,13 +288,12 @@ abstract class StripeBase extends AbstractPaymentProcessor {
       if (amountTotal && paymentSessionData.amount === Math.round(amountTotal)) {
         return
       }
-
       try {
         const id = paymentSessionData.id as string
         const sessionData = (await this.stripe_.paymentIntents.update(id, {
           amount: Math.round(amountTotal),
         })) as unknown as PaymentProcessorSessionResponse["session_data"]
-        return { session_data: { ...sessionData, tax_amount: calculation.tax_amount_exclusive } }
+        return { session_data: sessionData }
       } catch (e) {
         return this.buildError("An error occurred in updatePayment", e)
       }
