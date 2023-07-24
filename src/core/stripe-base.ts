@@ -2,30 +2,55 @@ import Stripe from "stripe"
 import { EOL } from "os"
 import {
   AbstractPaymentProcessor,
+  Cart,
   isPaymentProcessorError,
   PaymentProcessorContext,
   PaymentProcessorError,
   PaymentProcessorSessionResponse,
   PaymentSessionStatus,
 } from "@medusajs/medusa"
+import { ClaimOrder, Discount, LineItem, ShippingMethod, Swap } from "@medusajs/medusa/dist/models"
 
 import {
   ErrorCodes,
   ErrorIntentStatus,
   PaymentIntentOptions,
   StripeOptions,
+  CalculationContextData,
+  CalculationContextOptions,
+  TaxCalculationContext,
+  AllocationMapOptions,
+  LineAllocationsMap,
+  LineDiscountAmount
 } from "../types"
+
+
+export enum DiscountRuleType {
+  FIXED = "fixed",
+  PERCENTAGE = "percentage",
+  FREE_SHIPPING = "free_shipping",
+}
+
 abstract class StripeBase extends AbstractPaymentProcessor {
   static identifier = ""
 
-  protected readonly options_: StripeOptions
+  protected readonly options_: StripeOptions;
   protected stripe_: Stripe
+  protected calculationContext_: any
 
   protected constructor(_, options) {
-    super(_, options)
+    super(_, options);
     this.options_ = options
-
     this.init()
+  }
+
+   protected async calculatioContext(options:any, cartOrOrder:any): Promise<any>  {
+    this.calculationContext_ =
+    options.calculation_context ||
+    (await this.getCalculationContext(cartOrOrder, {
+      exclude_shipping: true,
+      exclude_gift_cards: options.exclude_gift_cards,
+    }))
   }
 
   protected init(): void {
@@ -37,6 +62,129 @@ abstract class StripeBase extends AbstractPaymentProcessor {
   }
 
   abstract get paymentIntentOptions(): PaymentIntentOptions
+
+
+  async getCalculationContext(
+    calculationContextData: CalculationContextData,
+    options: CalculationContextOptions = {}
+  ): Promise<TaxCalculationContext> {
+    const allocationMap = await this.getAllocationMap(calculationContextData, {
+      exclude_gift_cards: options.exclude_gift_cards,
+      exclude_discounts: options.exclude_discounts,
+    })
+
+    let shippingMethods: ShippingMethod[] = []
+    // Default to include shipping methods
+    if (!options.exclude_shipping) {
+      shippingMethods = calculationContextData.shipping_methods || []
+    }
+
+    return {
+      shipping_address: calculationContextData.shipping_address,
+      shipping_methods: shippingMethods,
+      customer: calculationContextData.customer,
+      region: calculationContextData.region,
+      is_return: options.is_return ?? false,
+      allocation_map: allocationMap,
+    }
+  }
+
+  getLineDiscounts(
+    cartOrOrder: {
+      items: LineItem[]
+      swaps?: Swap[]
+      claims?: ClaimOrder[]
+    },
+    discount?: Discount
+  ): LineDiscountAmount[] {
+    let merged: LineItem[] = [...(cartOrOrder.items ?? [])]
+
+    // merge items from order with items from order swaps
+    if ("swaps" in cartOrOrder && cartOrOrder.swaps?.length) {
+      for (const s of cartOrOrder.swaps) {
+        merged = [...merged, ...s.additional_items]
+      }
+    }
+
+    if ("claims" in cartOrOrder && cartOrOrder.claims?.length) {
+      for (const c of cartOrOrder.claims) {
+        merged = [...merged, ...c.additional_items]
+      }
+    }
+
+    return merged.map((item) => {
+      const adjustments = item?.adjustments || []
+      const discountAdjustments = discount
+        ? adjustments.filter(
+            (adjustment) => adjustment.discount_id === discount.id
+          )
+        : []
+
+      const customAdjustments = adjustments.filter(
+        (adjustment) => adjustment.discount_id === null
+      )
+
+      const sumAdjustments = (total, adjustment) => total + adjustment.amount
+
+      return {
+        item,
+        amount: item.allow_discounts
+          ? discountAdjustments.reduce(sumAdjustments, 0)
+          : 0,
+        customAdjustmentsAmount: customAdjustments.reduce(sumAdjustments, 0),
+      }
+    })
+  }
+
+  async getAllocationMap(
+    orderOrCart: {
+      discounts?: Discount[]
+      items: LineItem[]
+      swaps?: Swap[]
+      claims?: ClaimOrder[]
+    },
+    options: AllocationMapOptions = {}
+  ): Promise<LineAllocationsMap> {
+    const allocationMap: LineAllocationsMap = {}
+
+    if (!options.exclude_discounts) {
+      const discount = orderOrCart.discounts?.find(
+        ({ rule }) => rule.type !== DiscountRuleType.FREE_SHIPPING
+      )
+
+      const lineDiscounts: LineDiscountAmount[] = this.getLineDiscounts(
+        orderOrCart,
+        discount
+      )
+
+      for (const ld of lineDiscounts) {
+        const adjustmentAmount = ld.amount + ld.customAdjustmentsAmount
+
+        if (allocationMap[ld.item.id]) {
+          allocationMap[ld.item.id].discount = {
+            amount: adjustmentAmount,
+            /**
+             * Used for the refund computation
+             */
+            unit_amount: adjustmentAmount / ld.item.quantity,
+          }
+        } else {
+          allocationMap[ld.item.id] = {
+            discount: {
+              amount: adjustmentAmount,
+              /**
+               * Used for the refund computation
+               */
+              unit_amount: Math.round(adjustmentAmount / ld.item.quantity),
+            },
+          }
+        }
+      }
+    }
+
+    return allocationMap
+  }
+
 
   getPaymentIntentOptions(): PaymentIntentOptions {
     const options: PaymentIntentOptions = {}
@@ -91,7 +239,7 @@ abstract class StripeBase extends AbstractPaymentProcessor {
       amount,
       resource_id,
       customer,
-    } = context
+    } = context;
     const description = (cart_context.payment_description ??
       this.options_?.payment_description) as string
 
@@ -246,33 +394,70 @@ abstract class StripeBase extends AbstractPaymentProcessor {
   }
 
   async updatePayment(
-    context: PaymentProcessorContext
+    context: PaymentProcessorContext & { context: { cart?: Cart }}
   ): Promise<PaymentProcessorError | PaymentProcessorSessionResponse | void> {
-    const { amount, customer, paymentSessionData, billing_address, currency_code } = context
-    const lineItems = [
-      {
-        amount: amount,
-        reference: 'L1',
-        tax_code: 'txcd_99999999',
-      },
-    ]
-    const calculation = await this.stripe_.tax.calculations.create({
-      currency: currency_code,
-      line_items: lineItems,
-      customer_details: {
-        address: {
-          line1: billing_address?.address_1 || '',
-          city: billing_address?.city || '',
-          state: billing_address?.province || '',
-          postal_code: billing_address?.postal_code || '',
-          country: billing_address?.country_code?.toUpperCase() || '',
-        },
-        address_source: "shipping"
-      },
-      expand: ['line_items.data.tax_breakdown']
+    const { amount, customer, paymentSessionData, currency_code,
+      context: paymentProcessorContext,
+    } = context;
+
+    // Context includes cart data we can use for our calculations
+    const { cart } = paymentProcessorContext;
+    // We need the cart data so throw an error if it's missing
+    if (!cart) {
+      return this.buildError(
+        "An error occurred in updatePayment",
+        new Error("Cart data is missing from paymentProcessorContext")
+      );
+    }
+    this.calculatioContext(this.options_, cart)
+    // Legally, we must use shipping_address for calculating sales tax, not billing_address
+    const { id: cartId, shipping_address, items } = cart;
+    // This should be an array of the individual line items
+    const lineItems = items.map((item:any) => {
+      let taxableAmount: number;
+      // TODO: Amount should account for discounts (will somehow need access to TaxCalculationContext, as found in the calculate method parameter in tax-calculation.ts)
+      const allocations = this.calculationContext_.allocation_map[item.id] || {}
+      taxableAmount = item.unit_price * item.quantity
+      taxableAmount -= allocations.discount?.amount ?? 0
+      return {
+        amount: taxableAmount,
+        reference: `${item.title} - ${item.id}`,
+        tax_code: "txcd_99999999",
+      };
     });
-    const amountTotal = calculation.amount_total
-    const stripeId = customer?.metadata?.stripe_id
+
+    // TODO: Add shipping cost (will somehow need access to TaxCalculationContext, as found in the calculate method parameter in tax-calculation.ts)
+    const shippingCost = this.calculationContext_.shipping_methods.reduce(
+      (cost, method) => method.price + cost,
+      0
+    );
+
+    // Only perform this calculation if a shipping address postal code is provided, otherwise use the default functionality for this method
+    // This will avoid unnecessary API calls
+    const calculation =
+      shipping_address && shipping_address.postal_code
+        ? await this.stripe_.tax.calculations.create({
+            currency: currency_code,
+            line_items: lineItems,
+            customer_details: {
+              address: {
+                line1: shipping_address.address_1 || "",
+                city: shipping_address.city || "",
+                state: shipping_address.province || "",
+                postal_code: shipping_address.postal_code || "",
+                country: shipping_address.country_code?.toUpperCase() || "",
+              },
+              address_source: "shipping",
+            },
+            shipping_cost: {
+              amount: shippingCost,
+              tax_code: "txcd_92010001",
+            },
+            expand: ["line_items.data.tax_breakdown"],
+          })
+        : null;
+    const amountTotal = calculation ? calculation.amount_total : amount;
+    const stripeId = customer?.metadata?.stripe_id;
 
     if (stripeId !== paymentSessionData.customer) {
       const result = await this.initiatePayment(context)
@@ -289,10 +474,29 @@ abstract class StripeBase extends AbstractPaymentProcessor {
         return
       }
       try {
-        const id = paymentSessionData.id as string
+        const id = paymentSessionData.id as string;
+        const sessionMetadata =
+          paymentSessionData.metadata as Stripe.Emptyable<Stripe.MetadataParam>
+        const metadata = sessionMetadata || {}
+        // Store the cart ID in the metadata
+        metadata.cartId = cartId
+        // We need to store the calculation ID in the metadata to create the tax transaction later
+        if (calculation) metadata.tax_calculation = calculation.id
         const sessionData = (await this.stripe_.paymentIntents.update(id, {
           amount: Math.round(amountTotal),
+          metadata,
         })) as unknown as PaymentProcessorSessionResponse["session_data"]
+        // TODO: Use CartService here to update the cart metadata with tax information to cache API call
+        /*
+        Example metadata: {
+          tax: {
+            calculationId: calculation.id,
+            amount: calculation.tax_amount_exclusive,
+          }
+        }
+        See src/strategies/tax-calculation.ts for how this will be used
+        */
+        // Whatever is returned here in the session_data property will update in the PaymentSession object, so no need to import any payment session services to update
         return { session_data: sessionData }
       } catch (e) {
         return this.buildError("An error occurred in updatePayment", e)

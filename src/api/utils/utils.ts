@@ -8,6 +8,7 @@ import { AwilixContainer } from "awilix"
 import { MedusaError } from "medusa-core-utils"
 import { EOL } from "os"
 import Stripe from "stripe"
+import StripeProviderService from "../../services/stripe-provider"
 
 const PAYMENT_PROVIDER_KEY = "pp_stripe"
 
@@ -124,6 +125,27 @@ async function onPaymentIntentSucceeded({
   const manager = container.resolve("manager")
 
   await manager.transaction(async (transactionManager) => {
+    // TODO: Need to create the tax transaction here so Stripe can handle and report sales tax to local governments
+    // See https://stripe.com/docs/tax/custom#tax-transaction for more info
+    // Example below:
+    const stripeProviderService = container.resolve(StripeProviderService)
+    let stripe: Stripe = new Stripe(stripeProviderService.paymentIntentOptions.api_key, {
+      apiVersion: "2022-11-15",
+    });
+    const transaction = await stripe.tax.transactions.createFromCalculation({
+      calculation: '{{TAX_CALCULATION}}',
+      reference: '{{PAYMENT_INTENT_ID}}',
+      expand: ['line_items'],
+    });
+    // TODO: Save tax transaction to payment intent metadata
+    const paymentIntent = await stripe.paymentIntents.update(
+      '{{PAYMENT_INTENT_ID}}',
+      {
+        metadata: {
+          tax_transaction: '{{TAX_TRANSACTION}}',
+        },
+      }
+    );
     if (isPaymentCollection) {
       await capturePaymenCollectiontIfNecessary({
         paymentIntent,

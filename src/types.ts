@@ -1,3 +1,6 @@
+import { Address, ClaimOrder, Customer, Discount, LineItem, Region, ShippingMethod, Swap } from "@medusajs/medusa/dist/models"
+import { DiscountAllocation, GiftCardAllocation } from "@medusajs/medusa/dist/types/totals"
+
 export interface StripeOptions {
   api_key: string
   webhook_secret: string
@@ -37,4 +40,44 @@ export const PaymentProviderKeys = {
   GIROPAY: "stripe-giropay",
   IDEAL: "stripe-ideal",
   PRZELEWY_24: "stripe-przelewy24",
+}
+export type CalculationContextData = {
+  discounts: Discount[]
+  items: LineItem[]
+  customer: Customer
+  region: Region
+  shipping_address: Address | null
+  swaps?: Swap[]
+  claims?: ClaimOrder[]
+  shipping_methods?: ShippingMethod[]
+}
+
+export type CalculationContextOptions = {
+  is_return?: boolean
+  exclude_shipping?: boolean
+  exclude_gift_cards?: boolean
+  exclude_discounts?: boolean
+}
+
+export type TaxCalculationContext = {
+  shipping_address: Address | null
+  customer: Customer
+  region: Region
+  is_return: boolean
+  shipping_methods: ShippingMethod[]
+  allocation_map: LineAllocationsMap
+}
+
+export type LineAllocationsMap = {
+  [K: string]: { gift_card?: GiftCardAllocation; discount?: DiscountAllocation }
+}
+export type AllocationMapOptions = {
+  exclude_gift_cards?: boolean
+  exclude_discounts?: boolean
+}
+
+export type LineDiscountAmount = {
+  item: LineItem
+  amount: number
+  customAdjustmentsAmount: number
 }

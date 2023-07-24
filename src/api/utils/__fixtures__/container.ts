@@ -11,14 +11,8 @@ import {
   throwingCartId,
 } from "./data"
 
+
 export const container = createContainer()
-container.register(
-  "logger",
-  asValue({
-    warn: jest.fn(),
-    error: jest.fn(),
-  })
-)
 
 container.register(
   "manager",
