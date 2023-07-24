@@ -1,4 +1,4 @@
-import { container } from './../api/utils/__fixtures__/container';
+import {  createContainer } from "awilix"
 import {
   ITaxCalculationStrategy,
   LineItem,
@@ -7,10 +7,12 @@ import {
   TaxCalculationContext,
 } from "@medusajs/medusa";
 import Stripe from "stripe";
+
+export const container = createContainer()
 class TaxCalculationStrategy implements ITaxCalculationStrategy {
   private stripe: Stripe;
   private container: any;
-  constructor(container, options) {
+  constructor(_, options) {
     // options contains plugin configurations
     this.stripe = new Stripe(options.api_key, {
       apiVersion: "2022-11-15",
@@ -22,7 +24,7 @@ class TaxCalculationStrategy implements ITaxCalculationStrategy {
     taxLines: (ShippingMethodTaxLine | LineItemTaxLine)[],
     calculationContext: TaxCalculationContext
   ): Promise<any> {
-    const manager = container.resolve("manager")
+    const manager = this.container.resolve("manager")
     const orderService = this.container.resolve("orderService")
     const orderId = items[0].order_id;
     const cartId = items[0].cart_id;
