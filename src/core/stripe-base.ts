@@ -44,7 +44,7 @@ abstract class StripeBase extends AbstractPaymentProcessor {
     this.init()
   }
 
-   protected async calculatioContext(options:any, cartOrOrder:any): Promise<any>  {
+   protected async calculationContext(options:any, cartOrOrder:any): Promise<any>  {
     this.calculationContext_ =
     options.calculation_context ||
     (await this.getCalculationContext(cartOrOrder, {
@@ -409,7 +409,7 @@ abstract class StripeBase extends AbstractPaymentProcessor {
         new Error("Cart data is missing from paymentProcessorContext")
       );
     }
-    this.calculatioContext(this.options_, cart)
+    this.calculationContext(this.options_, cart)
     // Legally, we must use shipping_address for calculating sales tax, not billing_address
     const { id: cartId, shipping_address, items } = cart;
     // This should be an array of the individual line items
