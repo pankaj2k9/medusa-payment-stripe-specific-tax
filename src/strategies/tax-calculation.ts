@@ -34,10 +34,10 @@ class TaxCalculationStrategy implements ITaxCalculationStrategy {
 
     return Math.round(
       await this.calculateLineItemsTax(items, lineItemsTaxLines, calculationContext) +
-        this.calculateShippingMethodsTax(
-          calculationContext.shipping_methods,
-          shippingMethodsTaxLines
-        )
+      this.calculateShippingMethodsTax(
+        calculationContext.shipping_methods,
+        shippingMethodsTaxLines
+      )
     )
   }
 
@@ -56,7 +56,7 @@ class TaxCalculationStrategy implements ITaxCalculationStrategy {
       | string
       | undefined;
     const currency = region?.currency_code;
-    const lineItems = items.map((item:any) => {
+    const lineItems = items.map((item: any) => {
       let taxableAmount: number;
       // TODO: Amount should account for discounts (will somehow need access to TaxCalculationContext, as found in the calculate method parameter in tax-calculation.ts)
       const allocations = context.allocation_map[item.id] || {}
@@ -79,7 +79,7 @@ class TaxCalculationStrategy implements ITaxCalculationStrategy {
     };
 
 
-    if(!shipping_address?.address_1 || lineItems?.length <= 0) {
+    if (!shipping_address?.address_1 || lineItems?.length <= 0 || !shipping_address?.city || !shipping_address?.province || !shipping_address?.postal_code || !shipping_address?.country_code ) {
       return 0;
     }
     const shippingCost = context?.shipping_methods?.reduce(
