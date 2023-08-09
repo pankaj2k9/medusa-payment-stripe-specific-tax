@@ -44,7 +44,7 @@ abstract class StripeBase extends AbstractPaymentProcessor {
     this.init()
   }
 
-   protected async calculationContext(options:any, cartOrOrder:any): Promise<any>  {
+  protected async calculationContext(options:any, cartOrOrder:any): Promise<any>  {
     this.calculationContext_ =
     options.calculation_context ||
     (await this.getCalculationContext(cartOrOrder, {

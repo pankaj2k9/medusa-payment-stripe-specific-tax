@@ -1,7 +1,13 @@
+import {
+  PaymentProcessorError,
+} from "@medusajs/medusa"
 import StripeBase from "../core/stripe-base"
 import { PaymentIntentOptions, PaymentProviderKeys } from "../types"
 
 class GiropayProviderService extends StripeBase {
+  updatePaymentData(sessionId: string, data: Record<string, unknown>): Promise<Record<string, unknown> | PaymentProcessorError> {
+    throw new Error("Method not implemented.")
+  }
   static identifier = PaymentProviderKeys.GIROPAY
 
   constructor(_, options) {
